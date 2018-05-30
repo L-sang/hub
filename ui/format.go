@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -29,6 +30,8 @@ type expander struct {
 
 	// padNext is an object that should be used to pad the next placeholder.
 	padNext *padder
+
+	wrapNext *wrapper
 }
 
 func (f *expander) Expand(format string) string {
@@ -79,6 +82,13 @@ func (f *expander) expandOneVar(format string) (expand string, untouched string)
 		f.padNext = nil
 		e, u := f.expandOneVar(format)
 		return f.pad(e, p), u
+	}
+
+	if f.wrapNext != nil {
+		w := f.wrapNext
+		f.wrapNext = nil
+		e, u := f.expandOneVar(format)
+		return w.wrap(e), u
 	}
 
 	if e, u, ok := f.expandSpecialChar(format[0], format[1:]); ok {
@@ -142,6 +152,11 @@ func (f *expander) expandSpecialChar(firstChar byte, format string) (expand stri
 				f.padNext = p
 				return "", m[6], true
 			}
+		}
+	case 'w':
+		if m := wrapPattern.FindStringSubmatch(format); len(m) == 5 {
+			f.wrapNext = wrapperFromMatch(m)
+			return "", m[4], true
 		}
 	}
 	return "", "", false
@@ -210,6 +225,7 @@ type padder struct {
 }
 
 var paddingPattern = regexp.MustCompile(`^(>)?([><])(\|)?\((\d+)(,[rm]?trunc)?\)(.*)$`)
+var wrapPattern = regexp.MustCompile(`^\((\d+)(?:,(\d+)(?:,(\d+))?)?\)(.*)$`)
 
 func padderFromConfig(alsoLeft, orientation, asColumn, size, trunc string) *padder {
 	p := &padder{}
@@ -261,4 +277,47 @@ func (p *padder) truncate(s string, numReduce int) string {
 
 	// Trunc left by default.
 	return s[:numLeft] + ".."
+}
+
+type wrapper struct {
+	width       int
+	indentFirst int
+	indentRest  int
+}
+
+func wrapperFromMatch(match []string) *wrapper {
+	width, _ := strconv.Atoi(match[1])
+	indentFirst := -1
+	indentRest := -1
+
+	if match[2] != "" {
+		indentFirst, _ = strconv.Atoi(match[2])
+		indentRest = indentFirst
+	}
+	if match[3] != "" {
+		indentRest, _ = strconv.Atoi(match[3])
+	}
+
+	return &wrapper{
+		width:       width,
+		indentFirst: indentFirst,
+		indentRest:  indentRest,
+	}
+}
+
+func (w *wrapper) wrap(s string) string {
+	lines := strings.Split(lineWrap(s, w.width), "\n")
+	for i, line := range lines {
+		indentSize := w.indentFirst
+		if i > 0 {
+			indentSize = w.indentRest
+		}
+		lines[i] = fmt.Sprintf("%*s%s", indentSize, "", line)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func lineWrap(s string, width int) string {
+	// TODO: implement wrapping by column
+	return s
 }
